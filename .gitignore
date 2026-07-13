@@ -1,0 +1,10 @@
+.env
+node_modules/
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+agent/state.json
+agent/journal.jsonl
+agent/*.log
+oracle/payments.log
+*.log

@@ -1,0 +1,16 @@
+{
+  "name": "steward",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Steward — autonomous treasury agent on Arc (policy vault + FX rebalancing + scheduled payments)",
+  "scripts": {
+    "agent": "node agent/index.mjs"
+  },
+  "dependencies": {
+    "@circle-fin/x402-batching": "^3.2.0",
+    "@x402/core": "^2.18.0",
+    "@x402/evm": "^2.18.0",
+    "viem": "^2.21.0"
+  }
+}

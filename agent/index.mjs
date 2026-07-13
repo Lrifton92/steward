@@ -49,10 +49,29 @@ const POLICY = {
   maxSlippageBps: 150, // taux desk vs taux marché
 };
 
+// Source FX payée en nanopayments (x402/Circle Gateway) — l'agent achète sa donnée,
+// micro-paiement gasless par requête. Fallback gratuit si l'oracle est down.
+let gatewayClient = null;
+async function paidRate() {
+  if (!gatewayClient) {
+    const { GatewayClient } = await import("@circle-fin/x402-batching/client");
+    gatewayClient = new GatewayClient({ chain: "arcTestnet", privateKey: env.AGENT_PRIVATE_KEY });
+  }
+  const result = await gatewayClient.pay(env.ORACLE_URL, { method: "GET" });
+  const data = typeof result.data === "string" ? JSON.parse(result.data) : result.data;
+  return { eurPerUsd: data.eurPerUsd, paidUsdc: result.formattedAmount, source: "x402-oracle" };
+}
+
 async function marketRate() {
   // EUR par USD → EURC par USDC (6 déc.)
-  const r = await fetch("https://api.frankfurter.app/latest?from=USD&to=EUR").then((x) => x.json());
-  return { eurPerUsd: r.rates.EUR, rate6: BigInt(Math.round(r.rates.EUR * 1e6)) };
+  let r;
+  try {
+    r = await paidRate();
+  } catch (e) {
+    const fb = await fetch("https://api.frankfurter.app/latest?from=USD&to=EUR").then((x) => x.json());
+    r = { eurPerUsd: fb.rates.EUR, source: "frankfurter-fallback", oracleError: (e.message || "").slice(0, 120) };
+  }
+  return { ...r, rate6: BigInt(Math.round(r.eurPerUsd * 1e6)) };
 }
 
 async function tokenBalance(token, holder) {
@@ -172,7 +191,7 @@ async function tick() {
     ts: new Date().toISOString(),
     vault,
     balances: { USDC: usdc, EURC: eurc },
-    market: { eurPerUsd: mkt.eurPerUsd },
+    market: { eurPerUsd: mkt.eurPerUsd, source: mkt.source, paidUsdc: mkt.paidUsdc, oracleError: mkt.oracleError },
     decision,
     execution,
     payments: payments.length ? payments : undefined,
