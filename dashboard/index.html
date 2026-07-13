@@ -172,6 +172,27 @@ async function refresh() {
   } catch {}
 }
 
+async function ensureArc(chainId) {
+  const hex = '0x' + chainId.toString(16);
+  const current = await window.ethereum.request({ method: 'eth_chainId' });
+  if (current === hex) return true;
+  try {
+    await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] });
+  } catch (e) {
+    // réseau inconnu du wallet → on le déclare puis on re-switch
+    await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{
+      chainId: hex,
+      chainName: 'Arc Testnet',
+      nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
+      rpcUrls: ['https://rpc.testnet.arc.network'],
+      blockExplorerUrls: ['https://testnet.arcscan.app'],
+    }]});
+    await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] });
+  }
+  // vérification dure : on n'envoie JAMAIS sur un autre réseau
+  return (await window.ethereum.request({ method: 'eth_chainId' })) === hex;
+}
+
 async function op(fn, params) {
   $('msg').textContent = '';
   if (!window.ethereum) { $('msg').textContent = 'No wallet injected — open this page in the browser that has Coinbase Wallet.'; return; }
@@ -179,11 +200,12 @@ async function op(fn, params) {
     const [from] = await window.ethereum.request({ method: 'eth_requestAccounts' });
     const q = new URLSearchParams({ fn, ...params });
     const { to, data, chainId } = await fetch('/api/encode?' + q).then(r => r.json());
-    try {
-      await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x' + chainId.toString(16) }] });
-    } catch {}
+    if (!(await ensureArc(chainId))) {
+      $('msg').textContent = 'BLOCKED: wallet is not on Arc Testnet — switch network in Coinbase Wallet, then retry.';
+      return;
+    }
     const tx = await window.ethereum.request({ method: 'eth_sendTransaction', params: [{ from, to, data }] });
-    $('msg').textContent = 'tx sent: ' + tx;
+    $('msg').textContent = 'tx sent on Arc: ' + tx;
     setTimeout(refresh, 6000);
   } catch (e) { $('msg').textContent = e.message || String(e); }
 }
