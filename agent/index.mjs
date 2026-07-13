@@ -3,7 +3,7 @@
 // Chaque tick journalise la décision AVEC son pourquoi (journal.jsonl) — auditable.
 import { createPublicClient, createWalletClient, http, formatUnits, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { readFileSync, appendFileSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,6 +33,8 @@ const erc20 = parseAbi([
 const vaultAbi = parseAbi([
   "function remainingToday(address) view returns (uint256)",
   "function approveTarget(address token, address target, uint256 amount)",
+  "function pay(address token, address to, uint256 amount, string memo)",
+  "function allowedPayee(address) view returns (bool)",
 ]);
 const deskAbi = parseAbi([
   "function rateUsdcToEurc() view returns (uint256)",
@@ -108,6 +110,43 @@ async function executeRebalance(decision, mkt) {
   return { executed: true, amountIn: amountIn.toString(), quoted: quoted.toString(), approveTx, swapTx, block: Number(rcpt.blockNumber) };
 }
 
+// ---- paiements programmés (agent/payments.json) ----
+// [{ "payee": "0x..", "token": "USDC"|"EURC", "amount": 2.5, "memo": "sub-x",
+//    "everyDays": 7, "lastPaid": "2026-07-13" }]
+const paymentsPath = path.join(root, "agent", "payments.json");
+
+function loadPayments() {
+  try { return JSON.parse(readFileSync(paymentsPath, "utf8")); } catch { return []; }
+}
+
+async function runScheduledPayments() {
+  const items = loadPayments();
+  const results = [];
+  let dirty = false;
+  for (const p of items) {
+    const due = !p.lastPaid || (Date.now() - Date.parse(p.lastPaid)) >= p.everyDays * 86_400_000;
+    if (!due) continue;
+    const token = p.token === "EURC" ? env.EURC : env.USDC;
+    const allowed = await client.readContract({ address: env.VAULT_ADDRESS, abi: vaultAbi, functionName: "allowedPayee", args: [p.payee] });
+    if (!allowed) { results.push({ payee: p.payee, paid: false, reason: "payee not allowlisted in vault" }); continue; }
+    if (process.env.EXECUTE !== "1") { results.push({ payee: p.payee, paid: false, reason: "dry-run" }); continue; }
+    try {
+      const tx = await wallet.writeContract({
+        address: env.VAULT_ADDRESS, abi: vaultAbi, functionName: "pay",
+        args: [token, p.payee, BigInt(Math.round(p.amount * 1e6)), p.memo || ""],
+      });
+      await client.waitForTransactionReceipt({ hash: tx });
+      p.lastPaid = new Date().toISOString().slice(0, 10);
+      dirty = true;
+      results.push({ payee: p.payee, paid: true, amount: p.amount, token: p.token, tx });
+    } catch (e) {
+      results.push({ payee: p.payee, paid: false, reason: (e.shortMessage || e.message || "").slice(0, 160) });
+    }
+  }
+  if (dirty) writeFileSync(paymentsPath, JSON.stringify(items, null, 2));
+  return results;
+}
+
 async function tick() {
   const vault = env.VAULT_ADDRESS;
   const mkt = await marketRate();
@@ -127,6 +166,8 @@ async function tick() {
     }
   }
 
+  const payments = await runScheduledPayments();
+
   const entry = {
     ts: new Date().toISOString(),
     vault,
@@ -134,13 +175,22 @@ async function tick() {
     market: { eurPerUsd: mkt.eurPerUsd },
     decision,
     execution,
+    payments: payments.length ? payments : undefined,
     mode: process.env.EXECUTE === "1" ? "execute" : "dry-run",
   };
   console.log(JSON.stringify(entry, null, 2));
   appendFileSync(path.join(root, "agent", "journal.jsonl"), JSON.stringify(entry) + "\n");
 }
 
-tick().catch((e) => {
-  console.error("tick failed:", e.message);
-  process.exit(1);
-});
+const loopMin = Number(process.env.LOOP_MINUTES || 0);
+if (loopMin > 0) {
+  console.log(`Steward loop: tick every ${loopMin} min (mode ${process.env.EXECUTE === "1" ? "execute" : "dry-run"})`);
+  const safeTick = () => tick().catch((e) => console.error("tick failed:", e.message));
+  safeTick();
+  setInterval(safeTick, loopMin * 60_000);
+} else {
+  tick().catch((e) => {
+    console.error("tick failed:", e.message);
+    process.exit(1);
+  });
+}

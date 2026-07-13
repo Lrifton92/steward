@@ -1,0 +1,10 @@
+[
+  {
+    "payee": "0xb0E367575b4724B26Af191b2D8991373Fa7cC857",
+    "token": "USDC",
+    "amount": 1.5,
+    "memo": "demo: weekly supplier invoice",
+    "everyDays": 7,
+    "lastPaid": null
+  }
+]
