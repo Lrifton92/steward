@@ -59,12 +59,25 @@ async function state() {
   } catch {}
   let payments = [];
   try { payments = JSON.parse(readFileSync(path.join(root, "agent", "payments.json"), "utf8")); } catch {}
+  // Stats oracle nanopayments, dérivées du journal : dernière source FX + cumul payé en x402.
+  let oracle = { lastSource: null, lastPaidUsdc: null, totalPaidUsdc: 0, paidCount: 0 };
+  try {
+    const lines = readFileSync(path.join(root, "agent", "journal.jsonl"), "utf8").trim().split(/\r?\n/);
+    for (const l of lines) {
+      let e; try { e = JSON.parse(l); } catch { continue; }
+      const m = e.market || {};
+      if (m.source) { oracle.lastSource = m.source; oracle.lastPaidUsdc = m.paidUsdc ?? null; }
+      if (m.paidUsdc) { oracle.totalPaidUsdc += Number(m.paidUsdc); oracle.paidCount++; }
+    }
+    oracle.totalPaidUsdc = Number(oracle.totalPaidUsdc.toFixed(6));
+  } catch {}
   return {
     addresses: { vault: V, desk: D, usdc: env.USDC, eurc: env.EURC, owner, agent },
     vault: { USDC: bal6(vUsdc), EURC: bal6(vEurc) },
     desk: { USDC: bal6(dUsdc), EURC: bal6(dEurc), rateUsdcToEurc: Number(rate) / 1e6 },
     caps: { USDC: { cap: bal6(capU), remaining: bal6(remU) }, EURC: { cap: bal6(capE), remaining: bal6(remE) } },
     market: { eurPerUsd: market },
+    oracle,
     payments,
   };
 }

@@ -59,6 +59,9 @@
   .tabbtns { display: flex; gap: 8px; margin-bottom: 14px; }
   .tabbtns button { width: auto; padding: 8px 14px; font-size: 13px; }
   .tabbtns button.off { background: rgba(255,255,255,.07); color: var(--dim); }
+  .badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; }
+  .badge.pay { background: rgba(51,214,166,.12); color: var(--acc2); border: 1px solid rgba(51,214,166,.35); }
+  .badge.free { background: rgba(255,180,84,.10); color: var(--warn); border: 1px solid rgba(255,180,84,.3); }
 </style>
 </head>
 <body>
@@ -84,6 +87,8 @@
     <div class="row" style="margin-top:12px"><span class="k">Target ratio</span><span class="v">60 / 40</span></div>
     <div class="row"><span class="k">Market EUR/USD</span><span class="v" id="mkt">—</span></div>
     <div class="row"><span class="k">Desk rate</span><span class="v" id="desk">—</span></div>
+    <div class="row"><span class="k">FX source</span><span class="v" id="fxsrc">—</span></div>
+    <div class="row"><span class="k">Oracle spend</span><span class="v" id="oraclespend">—</span></div>
   </div>
 
   <div class="card">
@@ -151,6 +156,13 @@ async function refresh() {
     $('cape').textContent = s.caps.EURC.remaining.toFixed(2) + ' / ' + s.caps.EURC.cap.toFixed(0) + ' left';
     $('baru').style.width = (s.caps.USDC.cap ? s.caps.USDC.remaining/s.caps.USDC.cap*100 : 0) + '%';
     $('bare').style.width = (s.caps.EURC.cap ? s.caps.EURC.remaining/s.caps.EURC.cap*100 : 0) + '%';
+    const o = s.oracle || {};
+    $('fxsrc').innerHTML = o.lastSource === 'x402-oracle'
+      ? '<span class="badge pay">x402 nanopayment · ' + (o.lastPaidUsdc ?? '?') + ' USDC/req</span>'
+      : o.lastSource ? '<span class="badge free">' + o.lastSource + '</span>' : 'n/a';
+    $('oraclespend').textContent = o.paidCount
+      ? o.totalPaidUsdc.toFixed(4) + ' USDC · ' + o.paidCount + ' paid queries'
+      : '0 — no paid query yet';
     $('owner').textContent = s.addresses.owner;
     $('agent').textContent = s.addresses.agent;
     $('vaultaddr').textContent = s.addresses.vault;
@@ -162,7 +174,7 @@ async function refresh() {
       const act = e.decision.action !== 'none';
       const exec = e.execution && e.execution.executed;
       return `<div class="j ${act?'act':''}">
-        <div class="t">${e.ts} · ${e.mode}</div>
+        <div class="t">${e.ts} · ${e.mode}${e.market && e.market.paidUsdc ? ' · <span class="badge pay">paid ' + e.market.paidUsdc + ' USDC</span>' : ''}</div>
         <div><b>${act ? ('rebalance ' + (e.decision.amountUsd ?? e.decision.amount) + '$ ' + e.decision.from + ' → ' + e.decision.to) : 'hold'}</b>
         — <span class="why">${e.decision.reason}</span></div>
         ${exec ? `<div class="tx">swap ${e.execution.swapTx}</div>` : ''}

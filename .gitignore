@@ -8,3 +8,5 @@ agent/journal.jsonl
 agent/*.log
 oracle/payments.log
 *.log
+# planning interne (FR) — ne pas publier
+BRIEF.md
