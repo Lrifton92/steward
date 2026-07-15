@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steward — Autonomous Treasury Agent on Arc</title>
+<style>
+:root{
+  --bg:#04040a; --panel:rgba(20,20,28,.55); --line:rgba(255,255,255,.10);
+  --blue:#6ea8ff; --cyan:#5ee8ff; --violet:#c5b8ff;
+  --mint:#5effb5; --amber:#ffd166; --rose:#ff6b8a;
+  --fg:#fff; --fg2:#b8b8c4;
+  --mono:ui-monospace,'SF Mono','JetBrains Mono','Cascadia Code',monospace;
+  --sans:ui-sans-serif,system-ui,'Inter',-apple-system,sans-serif;
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--fg); font-family:var(--sans);
+  overflow:hidden; -webkit-font-smoothing:antialiased;
+}
+/* halos radiaux — jamais de grille */
+body::before{
+  content:''; position:fixed; inset:0; pointer-events:none; z-index:0;
+  background:
+    radial-gradient(60vw 60vh at 18% 12%, rgba(110,168,255,.13), transparent 60%),
+    radial-gradient(50vw 50vh at 85% 85%, rgba(94,232,255,.09), transparent 60%),
+    radial-gradient(40vw 40vh at 70% 20%, rgba(197,184,255,.06), transparent 60%);
+  animation:drift 22s ease-in-out infinite alternate;
+}
+@keyframes drift{to{transform:translate3d(-2%,2%,0) scale(1.06)}}
+
+.deck{position:absolute; inset:0; margin:auto; z-index:1}
+@media(min-width:769px){.deck{max-width:calc(100vh * 16 / 9); max-height:calc(100vw * 9 / 16)}}
+
+.slide{
+  position:absolute; inset:0; padding:clamp(28px,5vw,72px);
+  display:flex; flex-direction:column; justify-content:center;
+  opacity:0; visibility:hidden; transform:translateY(14px);
+  transition:opacity .45s var(--ease), transform .45s var(--ease), visibility .45s;
+}
+.slide.active{opacity:1; visibility:visible; transform:none}
+.slide.active .rise{animation:rise .55s var(--ease) both}
+.slide.active .rise:nth-child(1){animation-delay:.05s}
+.slide.active .rise:nth-child(2){animation-delay:.13s}
+.slide.active .rise:nth-child(3){animation-delay:.21s}
+.slide.active .rise:nth-child(4){animation-delay:.29s}
+.slide.active .rise:nth-child(5){animation-delay:.37s}
+.slide.active .rise:nth-child(6){animation-delay:.45s}
+@keyframes rise{from{opacity:0; transform:translateY(22px)} to{opacity:1; transform:none}}
+
+.kicker{
+  font-family:var(--mono); font-size:clamp(9px,1.05vw,12px); letter-spacing:.28em;
+  text-transform:uppercase; color:var(--blue); margin-bottom:18px;
+  display:flex; align-items:center; gap:10px;
+}
+.kicker::before{
+  content:''; width:22px; height:1px; background:linear-gradient(90deg,var(--blue),transparent);
+}
+h1{font-size:clamp(34px,5.6vw,74px); font-weight:600; line-height:1.04; letter-spacing:-.025em}
+h2{font-size:clamp(24px,3.5vw,46px); font-weight:600; line-height:1.12; letter-spacing:-.02em; margin-bottom:22px}
+.lede{font-size:clamp(14px,1.65vw,21px); color:var(--fg2); line-height:1.55; max-width:60ch; margin-top:18px}
+.big{font-size:clamp(26px,3.2vw,40px); font-weight:600; line-height:1.3; letter-spacing:-.015em; max-width:22ch}
+em{font-style:normal; color:var(--cyan)}
+strong{font-weight:600; color:var(--fg)}
+
+.grid{display:grid; gap:14px; margin-top:26px}
+.g2{grid-template-columns:repeat(2,1fr)}
+.g3{grid-template-columns:repeat(3,1fr)}
+@media(max-width:768px){.g2,.g3{grid-template-columns:1fr}}
+
+.card{
+  background:var(--panel); backdrop-filter:blur(20px) saturate(180%);
+  -webkit-backdrop-filter:blur(20px) saturate(180%);
+  border:1px solid var(--line); border-radius:16px; padding:clamp(14px,1.5vw,22px);
+}
+.card h3{font-size:clamp(13px,1.25vw,16px); font-weight:600; margin-bottom:8px; display:flex; align-items:center; gap:9px}
+.card p{font-size:clamp(11px,1.05vw,14px); color:var(--fg2); line-height:1.55}
+.ic{width:15px; height:15px; flex:none; stroke:var(--blue); fill:none; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round}
+
+.stat{font-family:var(--mono); font-size:clamp(22px,2.9vw,38px); font-weight:600; letter-spacing:-.02em; line-height:1}
+.stat.c{color:var(--cyan)} .stat.m{color:var(--mint)} .stat.a{color:var(--amber)}
+.unit{font-family:var(--mono); font-size:clamp(9px,.95vw,11px); letter-spacing:.16em; text-transform:uppercase; color:var(--fg2); margin-top:9px}
+
+.mono{font-family:var(--mono); font-size:clamp(9.5px,1vw,12.5px); color:var(--fg2); word-break:break-all}
+.addr{
+  font-family:var(--mono); font-size:clamp(9px,.95vw,12px); color:var(--cyan);
+  background:rgba(94,232,255,.07); border:1px solid rgba(94,232,255,.16);
+  border-radius:8px; padding:4px 9px; display:inline-block; word-break:break-all;
+}
+
+.live{display:inline-flex; align-items:center; gap:7px; font-family:var(--mono);
+  font-size:clamp(8.5px,.9vw,11px); letter-spacing:.18em; text-transform:uppercase; color:var(--mint)}
+.dot{width:6px; height:6px; border-radius:50%; background:var(--mint); animation:pulse 1.9s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1; box-shadow:0 0 0 0 rgba(94,255,181,.5)} 50%{opacity:.55; box-shadow:0 0 0 6px rgba(94,255,181,0)}}
+
+.flow{display:flex; align-items:stretch; gap:10px; margin-top:26px}
+@media(max-width:768px){.flow{flex-direction:column}}
+.step{flex:1; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px; position:relative}
+.step .n{font-family:var(--mono); font-size:10px; color:var(--blue); letter-spacing:.2em; margin-bottom:7px}
+.step h4{font-size:clamp(12px,1.15vw,15px); font-weight:600; margin-bottom:5px}
+.step p{font-size:clamp(10px,.95vw,12.5px); color:var(--fg2); line-height:1.5}
+.arrow{display:flex; align-items:center; color:rgba(110,168,255,.5); font-family:var(--mono); font-size:16px}
+@media(max-width:768px){.arrow{transform:rotate(90deg); justify-content:center}}
+
+.rows{margin-top:22px; border-top:1px solid var(--line)}
+.row{display:grid; grid-template-columns:auto 1fr auto; gap:14px; align-items:center;
+  padding:13px 2px; border-bottom:1px solid var(--line)}
+@media(max-width:768px){.row{grid-template-columns:1fr; gap:5px}}
+.row .lbl{font-family:var(--mono); font-size:clamp(8.5px,.9vw,11px); letter-spacing:.16em; text-transform:uppercase; color:var(--blue); min-width:126px}
+.row .txt{font-size:clamp(11.5px,1.1vw,14.5px); color:var(--fg2); line-height:1.5}
+.row .txt strong{color:var(--fg)}
+.ok{color:var(--mint); font-family:var(--mono); font-size:clamp(9px,.95vw,12px); letter-spacing:.1em; white-space:nowrap}
+
+.foot{position:absolute; left:clamp(28px,5vw,72px); bottom:clamp(20px,3vw,34px);
+  font-family:var(--mono); font-size:clamp(8.5px,.9vw,11px); letter-spacing:.16em;
+  text-transform:uppercase; color:rgba(184,184,196,.5)}
+
+.bar{position:fixed; top:0; left:0; height:2px; z-index:50;
+  background:linear-gradient(90deg,var(--blue),var(--cyan)); transition:width .45s var(--ease)}
+.nav{position:fixed; bottom:clamp(16px,2.4vw,26px); right:clamp(20px,3vw,34px);
+  display:flex; align-items:center; gap:12px; z-index:50}
+.nb{width:34px; height:34px; border-radius:50%; border:1px solid var(--line);
+  background:var(--panel); backdrop-filter:blur(20px); color:var(--fg2);
+  cursor:pointer; font-size:15px; line-height:1; transition:.2s var(--ease)}
+.nb:hover{color:var(--fg); border-color:rgba(110,168,255,.5); transform:translateY(-1px)}
+.nb:active{transform:scale(.94)}
+.cnt{font-family:var(--mono); font-size:11px; color:var(--fg2); letter-spacing:.1em; min-width:44px; text-align:center}
+
+.wip{position:fixed; top:14px; right:clamp(20px,3vw,34px); z-index:50;
+  font-family:var(--mono); font-size:9px; letter-spacing:.2em; text-transform:uppercase;
+  color:var(--amber); border:1px solid rgba(255,209,102,.3); background:rgba(255,209,102,.07);
+  border-radius:999px; padding:4px 11px}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before{animation:none!important; transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="bar" id="bar"></div>
+<div class="wip">CP2 · work in progress</div>
+<div class="deck">
+
+<!-- 1 -->
+<section class="slide active">
+  <div class="kicker rise">Encode × Arc · Agentic Economy Track</div>
+  <h1 class="rise">Steward</h1>
+  <p class="lede rise">An autonomous treasury agent for multi-currency stablecoin treasuries — with its guardrails <em>on-chain</em>, not in its prompt.</p>
+  <div class="rise" style="margin-top:30px"><span class="live"><span class="dot"></span>Live on Arc testnet</span></div>
+  <div class="foot">Lrifton92 · github.com/Lrifton92/steward</div>
+</section>
+
+<!-- 2 -->
+<section class="slide">
+  <div class="kicker rise">The problem</div>
+  <h2 class="rise">Nobody hands an agent<br>the treasury keys.</h2>
+  <p class="lede rise">An agentic economy needs treasuries that run without a human in the loop: rebalancing currency exposure, paying suppliers on schedule, buying the data it needs to decide.</p>
+  <p class="lede rise">But an agent that holds the keys can do <strong>anything</strong> — and an agent constrained only by its own instructions is constrained by nothing. One bad inference, one prompt injection, and the treasury is gone.</p>
+  <div class="foot">02 — Problem</div>
+</section>
+
+<!-- 3 -->
+<section class="slide">
+  <div class="kicker rise">The thesis</div>
+  <p class="big rise">Guardrails belong <em>on-chain</em>, where the agent cannot argue with them.</p>
+  <p class="lede rise">Steward's agent has no privileges of its own. Every rule it must obey — which tokens, which payees, how much per day — lives in a contract it does not control. The agent proposes; the vault disposes.</p>
+  <div class="grid g3 rise">
+    <div class="card"><h3><svg class="ic" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>Least privilege</h3><p>The agent key can call the vault. It cannot move funds, change rules, or raise its own limits.</p></div>
+    <div class="card"><h3><svg class="ic" viewBox="0 0 24 24"><path d="M12 3v18M5 8l7-5 7 5"/></svg>Owner escape hatch</h3><p>The owner can pause, re-scope or drain at any time, from a signed console.</p></div>
+    <div class="card"><h3><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Daily caps</h3><p>50 USDC / 50 EURC per rolling day, enforced by the contract with a lazy window reset.</p></div>
+  </div>
+  <div class="foot">03 — Thesis</div>
+</section>
+
+<!-- 4 -->
+<section class="slide">
+  <div class="kicker rise">How it works</div>
+  <h2 class="rise">Propose, check, settle.</h2>
+  <div class="flow rise">
+    <div class="step"><div class="n">01</div><h4>Read</h4><p>Every 15 min the agent reads vault balances, the FX desk rate, and a live EUR/USD quote it pays for.</p></div>
+    <div class="arrow">→</div>
+    <div class="step"><div class="n">02</div><h4>Decide</h4><p>Drift outside the 60/40 band? Payment due? It builds exactly one call — nothing else is possible.</p></div>
+    <div class="arrow">→</div>
+    <div class="step"><div class="n">03</div><h4>Enforce</h4><p>PolicyVault re-checks token, payee, cap and slippage on-chain, then reverts or settles atomically.</p></div>
+  </div>
+  <p class="lede rise">The interesting part is what is <em>absent</em>: no admin key in the loop, no off-chain allowlist to trust, no "please don't do that" in a system prompt.</p>
+  <div class="foot">04 — Architecture</div>
+</section>
+
+<!-- 5 -->
+<section class="slide">
+  <div class="kicker rise">Proof, not promise</div>
+  <h2 class="rise">It has already done this<br>without us.</h2>
+  <div class="grid g3 rise">
+    <div class="card">
+      <div class="stat c">7.0028</div><div class="unit">EURC acquired · autonomous rebalance</div>
+      <p style="margin-top:11px">Sold 8 USDC at the live 0.87535 rate. Post-tick split: <strong>60/40 exact</strong> — the loop converged and reported "within band".</p>
+    </div>
+    <div class="card">
+      <div class="stat m">1.5</div><div class="unit">USDC · scheduled payment, unattended</div>
+      <p style="margin-top:11px">A weekly supplier invoice. The vault <strong>refused</strong> the payee first, then executed it once allowlisted — the refusal is the feature.</p>
+    </div>
+    <div class="card">
+      <div class="stat a">22 / 22</div><div class="unit">Contract tests green</div>
+      <p style="margin-top:11px">PolicyVault + FxDesk, including cap exhaustion, rogue payee, and owner recovery paths.</p>
+    </div>
+  </div>
+  <div class="rise" style="margin-top:22px">
+    <span class="mono">PolicyVault v2 · Arc testnet</span><br>
+    <span class="addr" style="margin-top:7px">0x7523BfE340EF8c1662844B3F4D663e87C4560E32</span>
+  </div>
+  <div class="foot">05 — Live proof</div>
+</section>
+
+<!-- 6 -->
+<section class="slide">
+  <div class="kicker rise">Nanopayments</div>
+  <h2 class="rise">The agent pays<br>for its own data.</h2>
+  <p class="lede rise">Steward doesn't get its FX rate for free. Each quote is bought from an x402-priced oracle at <strong>0.0005 USDC per request</strong>, settled through Circle Gateway — machine to machine, no invoice, no subscription, no human.</p>
+  <div class="grid g2 rise">
+    <div class="card"><h3><svg class="ic" viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>Metered, not subscribed</h3><p>An agent that runs 96 times a day shouldn't buy a monthly data plan. It should pay per decision — which is what a stablecoin L1 makes possible.</p></div>
+    <div class="card"><h3><svg class="ic" viewBox="0 0 24 24"><path d="M22 11.1V12a10 10 0 1 1-5.9-9.1"/><path d="M22 4 12 14.1l-3-3"/></svg>Degrades honestly</h3><p>If the paid oracle is unreachable the agent falls back to a free source and <strong>says so</strong> — the dashboard badges the rate's provenance and totals what it spent.</p></div>
+  </div>
+  <div class="foot">06 — Agent Nanopayments</div>
+</section>
+
+<!-- 7 -->
+<section class="slide">
+  <div class="kicker rise">Why Arc</div>
+  <h2 class="rise">Gas in USDC changes<br>what an agent can be.</h2>
+  <p class="lede rise">A treasury agent that must hold a volatile gas token to move stablecoins has a second treasury problem it never asked for. On Arc it holds one asset class and spends it — including on gas.</p>
+  <div class="grid g3 rise">
+    <div class="card"><div class="stat" style="font-size:clamp(15px,1.6vw,21px)">5042002</div><div class="unit">Arc testnet · chain id</div></div>
+    <div class="card"><div class="stat" style="font-size:clamp(15px,1.6vw,21px)">USDC</div><div class="unit">Native gas token</div></div>
+    <div class="card"><div class="stat" style="font-size:clamp(15px,1.6vw,21px)">USDC ⇄ EURC</div><div class="unit">Settled atomically on-chain</div></div>
+  </div>
+  <p class="lede rise" style="font-size:clamp(12px,1.35vw,16px)">A note we'd rather state than hide: Circle's own spending policies (<span class="mono">circle wallet limit</span>) are mainnet-only today. On Arc testnet the PolicyVault <em>is</em> the enforcement layer — which is precisely the thing we set out to build.</p>
+  <div class="foot">07 — Arc & USDC</div>
+</section>
+
+<!-- 8 -->
+<section class="slide">
+  <div class="kicker rise">Track criteria</div>
+  <h2 class="rise">Where we stand.</h2>
+  <div class="rows rise">
+    <div class="row"><span class="lbl">Arc &amp; USDC</span><span class="txt">Two contracts <strong>deployed and live</strong> on Arc testnet, settling real USDC/EURC, gas paid in USDC.</span><span class="ok">COVERED</span></div>
+    <div class="row"><span class="lbl">Core products</span><span class="txt"><strong>Agent Nanopayments</strong> in production in the loop (x402 / Circle Gateway on <span class="mono">arcTestnet</span>). Agent Wallets under evaluation.</span><span class="ok">COVERED</span></div>
+    <div class="row"><span class="lbl">Use case</span><span class="txt">Treasury management — named explicitly in the track brief. Multi-currency exposure, scheduled payables, metered data.</span><span class="ok">COVERED</span></div>
+    <div class="row"><span class="lbl">Execution</span><span class="txt">Working demo: 15-min loop, mission-control dashboard, owner console, 22 tests. <strong>Autonomous rebalance and payment already executed.</strong></span><span class="ok">COVERED</span></div>
+  </div>
+  <div class="foot">08 — Judging criteria</div>
+</section>
+
+<!-- 9 -->
+<section class="slide">
+  <div class="kicker rise">Roadmap</div>
+  <h2 class="rise">To the 9th.</h2>
+  <div class="grid g2 rise">
+    <div class="card"><h3 style="color:var(--mint)"><svg class="ic" style="stroke:var(--mint)" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Done</h3><p>PolicyVault + FxDesk on Arc · autonomous rebalance · scheduled payments with on-chain refusal · x402 nanopayments oracle · mission-control dashboard · public repo.</p></div>
+    <div class="card"><h3 style="color:var(--amber)"><svg class="ic" style="stroke:var(--amber)" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Next</h3><p>Agent Wallets as the signer (pending a session-lifetime measurement — a 24/7 loop that dies at OTP expiry would defeat the point) · persistence · 3-min pitch video.</p></div>
+  </div>
+  <p class="lede rise">Beyond the hackathon: the FxDesk is deliberately pluggable — same interface as any escrow-based FX venue. Swap the desk for a licensed one and the policy layer is unchanged.</p>
+  <div class="foot">09 — Roadmap</div>
+</section>
+
+<!-- 10 -->
+<section class="slide">
+  <div class="kicker rise">Steward</div>
+  <p class="big rise">The agent proposes.<br>The vault <em>disposes</em>.</p>
+  <div class="rise" style="margin-top:26px">
+    <span class="mono">github.com/Lrifton92/steward</span><br>
+    <span class="addr" style="margin-top:9px">0x7523BfE340EF8c1662844B3F4D663e87C4560E32</span>
+  </div>
+  <div class="rise" style="margin-top:24px"><span class="live"><span class="dot"></span>Running on Arc testnet</span></div>
+  <div class="foot">Encode × Arc 2026 · Agentic Economy</div>
+</section>
+
+</div>
+
+<div class="nav">
+  <button class="nb" onclick="go(cur-1)" aria-label="Previous">←</button>
+  <span class="cnt"><span id="c">1</span> / <span id="t">10</span></span>
+  <button class="nb" onclick="go(cur+1)" aria-label="Next">→</button>
+</div>
+
+<script>
+const S=[...document.querySelectorAll('.slide')];let cur=1;
+document.getElementById('t').textContent=S.length;
+function go(n){
+  cur=Math.min(Math.max(n,1),S.length);
+  S.forEach((s,i)=>s.classList.toggle('active',i===cur-1));
+  document.getElementById('c').textContent=cur;
+  document.getElementById('bar').style.width=(cur/S.length*100)+'%';
+  history.replaceState(null,'','#'+cur);
+}
+addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){e.preventDefault();go(cur+1)}
+  if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();go(cur-1)}
+  if(e.key==='Home')go(1); if(e.key==='End')go(S.length);
+});
+addEventListener('click',e=>{if(!e.target.closest('.nav'))go(cur+1)});
+go(parseInt(location.hash.slice(1))||1);
+</script>
+</body>
+</html>
