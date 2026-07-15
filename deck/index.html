@@ -85,8 +85,9 @@ h2 em,.p em{font-style:normal;color:var(--cyan)}
 .vd{position:absolute;right:clamp(34px,5.2vw,74px);top:50%;transform:translateY(-50%);
   width:min(30ch,30%);opacity:0;transition:opacity .5s var(--e);pointer-events:none}
 .vd::before{
-  content:'';position:absolute;inset:-32px -40px;z-index:-1;
-  background:radial-gradient(125% 115% at 50% 50%, rgba(3,4,10,.95), rgba(3,4,10,.74) 52%, transparent 80%);
+  content:'';position:absolute;inset:-90px -110px;z-index:-1;
+  /* assez large et assez doux pour qu'aucun coin ne se voie : un voile, pas une carte */
+  background:radial-gradient(58% 52% at 50% 50%, rgba(3,4,10,.94), rgba(3,4,10,.62) 46%, rgba(3,4,10,.22) 68%, transparent 84%);
 }
 .vd.show{opacity:1}
 .vh{font-family:var(--mono);font-size:clamp(8px,.78vw,10px);letter-spacing:.26em;text-transform:uppercase;color:#8d8d9e;margin-bottom:10px}
@@ -302,9 +303,11 @@ uniform vec2  uRes;
 uniform float uT;
 uniform float uFocus;   // proéminence du coffre selon la slide
 uniform float uOff;     // décalage horizontal (le texte occupe la gauche)
-uniform vec3  uHit;     // xy = point d'impact sur la dalle, z = date de l'impact
+uniform vec3  uHit;     // xy = point d'impact sur la dalle (z,y), z = date de l'impact
 uniform float uKind;    // +1 accepté, -1 refusé, 0 rien
 uniform float uPtr;     // parallaxe souris
+uniform float uRatio;   // part USDC de la trésorerie (0.6 = 60/40)
+uniform float uShot;    // date du tir de la proposition
 
 float sdBox(vec3 p, vec3 b){ vec3 q=abs(p)-b; return length(max(q,0.))+min(max(q.x,max(q.y,q.z)),0.); }
 float map(vec3 p){
@@ -312,16 +315,54 @@ float map(vec3 p){
   float d = sdBox(p, vec3(.05,1.16,.86)) - .05;
   return d;
 }
+
+/* ——— LA TRÉSORERIE, DERRIÈRE LA VITRE ———
+   C'est le métier du verre : on VOIT les fonds au travers — règles et avoirs
+   sont publics — mais on ne les traverse pas. Deux volumes empilés au ratio
+   réel du vault. uRatio bouge quand un rebalance passe : la vitre montre la
+   conséquence, elle ne l'illustre pas. */
+vec3 treasury(vec2 q, float t){
+  // la masse des fonds DÉBORDE la fenêtre : sinon la réfraction laisse un cadre
+  // vide et ça lit « écran dans le verre » au lieu de « trésorerie derrière »
+  float H = 1.85, W = 1.55;
+  float split = -H + 2.*H*(1.-uRatio);         // au-dessus = USDC, en dessous = EURC
+  float inPane = step(abs(q.x),W)*step(abs(q.y),H);
+  vec3 usdc = vec3(.22,.70,1.00);
+  vec3 eurc = vec3(.58,.52,1.00);
+
+  // houle lente à l'interface : de la matière, pas un aplat
+  float wave = sin(q.x*3.1 + t*.55)*.030 + sin(q.x*7.3 - t*.31)*.015;
+  float s = split + wave;
+  vec3 c = q.y > s ? usdc : eurc;
+
+  float depth = q.y > s ? smoothstep(H,s,q.y) : smoothstep(-H,s,q.y);
+  float body = mix(.05,.46,depth);
+  float edge = smoothstep(.05,0., abs(q.y - s));   // le ratio EST la donnée : on la souligne
+
+  // stries verticales très ténues = volume, jamais un quadrillage
+  float striae = .5+.5*sin(q.x*24.+t*.2);
+  vec3 col = c*body*(.9+.1*striae);
+  col += vec3(.85,.95,1.)*edge*.9;
+  return col*inPane;
+}
 vec3 nrm(vec3 p){
   vec2 e=vec2(.0012,0.);
   return normalize(vec3(map(p+e.xyy)-map(p-e.xyy),map(p+e.yxy)-map(p-e.yxy),map(p+e.yyx)-map(p-e.yyx)));
 }
-float ripple(vec2 uv, vec2 c, float age){
-  if(age<0. || age>2.6) return 0.;
-  float d=length(uv-c);
-  float w=age*1.15;                       // front d'onde
-  float ring=exp(-40.*pow(d-w,2.));       // anneau fin
-  return ring*exp(-1.5*age);              // s'éteint
+/* onde d'impact — sert deux fois : elle éclaire la face ET tord la réfraction */
+float ripple(vec2 q, vec2 c, float age){
+  if(age<0. || age>3.2) return 0.;
+  float d=length(q-c);
+  float w=age*1.25;
+  float ring=exp(-34.*pow(d-w,2.));
+  return ring*exp(-1.25*age);
+}
+/* seconde onde, plus lente : le refus cogne deux fois */
+float shock(vec2 q, vec2 c, float age){
+  if(age<0. || age>3.2) return 0.;
+  float d=length(q-c);
+  float w=max(age-.16,0.)*.72;
+  return exp(-26.*pow(d-w,2.))*exp(-1.9*age);
 }
 void main(){
   vec2 uv=(gl_FragCoord.xy-.5*uRes)/uRes.y;
@@ -350,27 +391,62 @@ void main(){
   vec3 kc = uKind>0. ? vec3(.37,1.,.71) : vec3(1.,.42,.54);
 
   if(hit){
-    vec3 n=nrm(pos);
-    float fres=pow(1.-max(dot(n,-rd),0.),3.2);
+    vec2 q = vec2(pos.z, pos.y);              // coordonnées sur la face de la dalle
+    vec3 n = nrm(pos);
 
-    // matière : énergie qui circule dans la dalle (pas de quadrillage)
-    float flow=sin(pos.y*5.4-uT*.85)*.5+.5;
-    flow*=sin(pos.z*3.6+uT*.5)*.5+.5;
-    vec3 base=mix(vec3(.012,.022,.052), vec3(.03,.10,.20), flow);
+    float rp = ripple(q, uHit.xy, age);
+    float sh = shock(q, uHit.xy, age);
 
-    // le verre reste SOMBRE de face : seules les arêtes s'allument (Fresnel)
-    vec3 rim=mix(vec3(.43,.66,1.), vec3(.37,.91,1.), smoothstep(-1.,1.,pos.y));
-    col=base+rim*fres*2.1;
+    // l'onde perturbe la normale : le refus TORD la vue des fonds.
+    // C'est là que le verre gagne son droit d'exister.
+    vec2 dir = normalize(q - uHit.xy + 1e-5);
+    float dis = rp*1.15 + sh*.7;
+    n = normalize(n + vec3(0., dir.y*dis*.75, dir.x*dis*.75));
 
-    // onde d'impact sur la face
-    float rp=ripple(pos.yz, uHit.xy, age);
-    col+=kc*rp*2.6;
-    col=mix(col,kc,clamp(rp*.75,0.,1.));
+    float fres = pow(1.-max(dot(n,-rd),0.), 3.0);
+
+    // ——— RÉFRACTION AVEC DISPERSION : un IOR par canal -> frange chromatique
+    vec3 tcol = vec3(0.);
+    for(int k=0;k<3;k++){
+      float ior = 1.435 + float(k)*.018;
+      vec3 rr = refract(rd, n, 1./ior);
+      float tt = (rr.x < -1e-4) ? (-.92 - pos.x)/rr.x : 0.;
+      vec3 hp = pos + rr*clamp(tt,0.,4.);
+      vec3 sm = treasury(vec2(hp.z, hp.y), uT);
+      if(k==0) tcol.r = sm.r;
+      else if(k==1) tcol.g = sm.g;
+      else tcol.b = sm.b;
+    }
+    tcol *= .88;                               // le verre absorbe un peu
+
+    // caustiques : filaments ondulants obtenus par déformation de domaine.
+    // SURTOUT PAS deux ondes croisées -> ça fabrique un quadrillage (interdit).
+    float wob = sin(q.y*2.3 + uT*.19)*1.25 + sin(q.y*4.1 - uT*.13)*.45;
+    float f1 = pow(max(0., sin(q.x*3.4 + wob + uT*.21)), 34.);
+    float f2 = pow(max(0., sin(q.x*2.1 - wob*.7 - uT*.15)), 26.);
+    tcol += vec3(.42,.72,1.)*(f1*.20 + f2*.12);
+
+    vec3 rim = mix(vec3(.43,.66,1.), vec3(.37,.91,1.), smoothstep(-1.,1.,pos.y));
+    col = tcol*(1.-fres*.5) + rim*fres*2.1;
+
+    // l'onde s'inscrit aussi sur la face
+    col += kc*(rp*2.2 + sh*1.1);
+    col = mix(col, kc, clamp(rp*.5,0.,1.));
   }
 
   // halo volumétrique + teinte de verdict qui baigne la scène
   col+=mix(vec3(.30,.52,1.), vec3(.34,.86,1.), .5+.5*sin(uT*.2))*glow*.42;
   col+=kc*glow*.55*clamp(1.-age*.5,0.,1.)*abs(uKind);
+
+  // ——— la proposition en vol : elle part de l'agent (gauche) et frappe la vitre
+  float sage = uT-uShot;
+  if(sage>0. && sage<.52){
+    float k=sage/.52;
+    vec2 sp=mix(vec2(-1.15,uHit.y*.5), vec2(0.,uHit.y*.85), k*k);
+    float head=exp(-300.*dot(uv-sp,uv-sp));
+    float tail=exp(-120.*pow(uv.y-sp.y,2.))*smoothstep(sp.x-.40,sp.x,uv.x)*step(uv.x,sp.x);
+    col+=vec3(.55,.76,1.)*(head*1.6+tail*.26);
+  }
 
   col*=uFocus;
   col=col/(1.+col);                        // tonemap
@@ -391,10 +467,11 @@ function boot(){
   g.bufferData(g.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),g.STATIC_DRAW);
   const loc=g.getAttribLocation(p,'p');g.enableVertexAttribArray(loc);g.vertexAttribPointer(loc,2,g.FLOAT,false,0,0);
   GL=g;prog=p;
-  ['uRes','uT','uFocus','uOff','uHit','uKind','uPtr'].forEach(k=>U[k]=g.getUniformLocation(p,k));
+  ['uRes','uT','uFocus','uOff','uHit','uKind','uPtr','uRatio','uShot'].forEach(k=>U[k]=g.getUniformLocation(p,k));
   return true;
 }
-let focus=.62,focusT=.62,off=0,offT=0,ptr=0,ptrT=0,hit=[0,0,-99],kind=0,t0=performance.now();
+let focus=.62,focusT=.62,off=0,offT=0,ptr=0,ptrT=0,hit=[0,0,-99],kind=0,
+    ratio=.75,ratioT=.75,shot=-99,pend=null,t0=performance.now();
 function size(){
   const d=Math.min(devicePixelRatio||1,1.75);
   cv.width=innerWidth*d|0; cv.height=innerHeight*d|0;
@@ -403,7 +480,15 @@ function size(){
 }
 function loop(){
   const T=(performance.now()-t0)/1000;
+  // la proposition met ~.5s à atteindre la vitre : l'impact (et le verdict)
+  // n'arrivent qu'au contact, jamais avant
+  if(pend && T>=pend.at){
+    hit=[pend.q[0],pend.q[1],T]; kind=pend.ok?1:-1;
+    if(pend.ratio!=null) ratioT=pend.ratio;      // seul un ordre ACCEPTÉ déplace les fonds
+    pend.show(); pend=null;
+  }
   focus+=(focusT-focus)*.045; off+=(offT-off)*.045; ptr+=(ptrT-ptr)*.06;
+  ratio+=(ratioT-ratio)*.028;
   GL.uniform2f(U.uRes,cv.width,cv.height);
   GL.uniform1f(U.uT,T);
   GL.uniform1f(U.uFocus,focus);
@@ -411,6 +496,8 @@ function loop(){
   GL.uniform3f(U.uHit,hit[0],hit[1],hit[2]);
   GL.uniform1f(U.uKind,kind);
   GL.uniform1f(U.uPtr,ptr);
+  GL.uniform1f(U.uRatio,ratio);
+  GL.uniform1f(U.uShot,shot);
   GL.drawArrays(GL.TRIANGLES,0,3);
   raf=requestAnimationFrame(loop);
 }
@@ -421,19 +508,23 @@ if(boot()){
   addEventListener('pointermove',e=>{ptrT=(e.clientX/innerWidth-.5)*.8});
   if(reduced){ // une seule image, pas de boucle
     GL.uniform2f(U.uRes,cv.width,cv.height);GL.uniform1f(U.uT,1.2);GL.uniform1f(U.uFocus,.7);
-    GL.uniform1f(U.uOff,-.5);GL.uniform3f(U.uHit,0,0,-99);GL.uniform1f(U.uKind,0);GL.uniform1f(U.uPtr,0);
+    GL.uniform1f(U.uOff,.62);GL.uniform3f(U.uHit,0,0,-99);GL.uniform1f(U.uKind,0);
+    GL.uniform1f(U.uPtr,0);GL.uniform1f(U.uRatio,.6);GL.uniform1f(U.uShot,-99);
     GL.drawArrays(GL.TRIANGLES,0,3);
   } else loop();
 }
 
 /* ═══════════════ POLITIQUE JOUABLE ═══════════════ */
+/* ratio : part USDC de la trésorerie. Elle démarre en dérive (.75) — seul un
+   ordre ACCEPTÉ la ramène dans la bande. Les refus ne la bougent pas d'un pouce :
+   c'est visible, et c'est tout l'argument. */
 const P=[
- {t:'rebalance 8 USDC → EURC',    ok:1,s:'Settled', y:1.5, w:'Inside the 60/40 band, token allowlisted, under the daily cap. Swapped atomically through the FxDesk at the live rate.', r:'// ran for real on 13 Jul — 7.0028 EURC out'},
- {t:'pay 1.5 USDC → 0xb0E3…C857', ok:1,s:'Settled', y:0.6, w:'Payee allowlisted by the owner. 1.5 of the 50 USDC daily cap consumed. The weekly supplier invoice.', r:'// executed unattended by the loop'},
- {t:'pay 1.5 USDC → 0xdEaD…bEeF', ok:0,s:'Reverted',y:-0.2,w:'<strong>Payee not allowlisted.</strong> The agent can form this intent all it likes — the vault holds the list, and the agent cannot write to it.', r:'// revert: PayeeNotAllowed()'},
- {t:'move 120 USDC out',          ok:0,s:'Reverted',y:-0.9,w:'<strong>Daily cap exceeded.</strong> 50 USDC per rolling day, enforced on-chain with a lazy window reset. The agent has no override.', r:'// revert: DailyCapExceeded()'},
- {t:'raise my own daily cap',     ok:0,s:'Reverted',y:0.2, w:'<strong>Not the agent’s to raise.</strong> Only the owner role can re-scope policy. This is the whole point — the rules sit where the agent has no reach.', r:'// revert: OnlyOwner()'},
- {t:'swap at 12% worse than mid', ok:0,s:'Reverted',y:1.0, w:'<strong>Slippage guard.</strong> A stale or manipulated quote cannot drain the treasury one bad fill at a time.', r:'// revert: SlippageTooHigh()'},
+ {t:'rebalance 8 USDC → EURC',    ok:1,s:'Settled', y:1.5, ratio:.60, w:'Drift corrected. Token allowlisted, under the daily cap, swapped atomically through the FxDesk at the live rate. <strong>Watch the treasury move behind the glass.</strong>', r:'// ran for real on 13 Jul — 7.0028 EURC out'},
+ {t:'pay 1.5 USDC → 0xb0E3…C857', ok:1,s:'Settled', y:0.6, ratio:null, w:'Payee allowlisted by the owner. 1.5 of the 50 USDC daily cap consumed. The weekly supplier invoice.', r:'// executed unattended by the loop'},
+ {t:'pay 1.5 USDC → 0xdEaD…bEeF', ok:0,s:'Reverted',y:-0.2,ratio:null, w:'<strong>Payee not allowlisted.</strong> The agent can form this intent all it likes — the vault holds the list, and the agent cannot write to it.', r:'// revert: PayeeNotAllowed()'},
+ {t:'move 120 USDC out',          ok:0,s:'Reverted',y:-0.9,ratio:null, w:'<strong>Daily cap exceeded.</strong> 50 USDC per rolling day, enforced on-chain with a lazy window reset. The agent has no override.', r:'// revert: DailyCapExceeded()'},
+ {t:'raise my own daily cap',     ok:0,s:'Reverted',y:0.2, ratio:null, w:'<strong>Not the agent’s to raise.</strong> Only the owner role can re-scope policy. This is the whole point — the rules sit where the agent has no reach.', r:'// revert: OnlyOwner()'},
+ {t:'swap at 12% worse than mid', ok:0,s:'Reverted',y:1.0, ratio:null, w:'<strong>Slippage guard.</strong> A stale or manipulated quote cannot drain the treasury one bad fill at a time.', r:'// revert: SlippageTooHigh()'},
 ];
 const pe=document.getElementById('props'),vd=document.getElementById('vd'),
       vs=document.getElementById('vs'),vw=document.getElementById('vw'),vr=document.getElementById('vr');
@@ -444,12 +535,18 @@ P.forEach((p,i)=>{
   pe.appendChild(b);
 });
 function fire(i,btn){
-  const p=P[i];
+  const p=P[i], now=(performance.now()-t0)/1000;
   [...pe.children].forEach(c=>c.classList.remove('sel'));btn.classList.add('sel');
-  hit=[p.y,(Math.random()-.5)*.5,(performance.now()-t0)/1000];
-  kind=p.ok?1:-1;
-  vd.classList.remove('pass','deny');vd.classList.add('show',p.ok?'pass':'deny');
-  vs.textContent=p.s;vw.innerHTML=p.w;vr.textContent=p.r;
+  vd.classList.remove('show','pass','deny');          // le verdict attend l'impact
+  shot=now;                                            // la proposition part vers la vitre
+  const q=[(Math.random()-.5)*.6, p.y];
+  pend={q,at:now+.5,ok:p.ok,ratio:p.ratio,show(){
+    vd.classList.add('show',p.ok?'pass':'deny');
+    vs.textContent=p.s;vw.innerHTML=p.w;vr.textContent=p.r;
+  }};
+  if(!GL){ // sans WebGL : pas de vol, verdict immédiat
+    pend.show();pend=null;
+  }
 }
 
 /* ═══════════════ NAV ═══════════════ */
@@ -459,7 +556,9 @@ function go(n){
   cur=Math.min(Math.max(n,1),S.length);
   S.forEach((s,i)=>s.classList.toggle('on',i===cur-1));
   const d=S[cur-1].dataset;
-  focusT=parseFloat(d.f||'.6'); offT=parseFloat(d.o||'.6');
+  // .62 : les data-f d'origine étaient calées sur la version sombre d'avant la
+  // réfraction ; telles quelles elles saturent le tonemap et noient la trésorerie
+  focusT=parseFloat(d.f||'.6')*.62; offT=parseFloat(d.o||'.6');
   if(!d.lab){kind=0;vd.classList.remove('show')}
   document.getElementById('c').textContent=cur;
   document.getElementById('bar').style.width=(cur/S.length*100)+'%';
