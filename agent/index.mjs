@@ -124,7 +124,9 @@ async function send(fn, label) {
     catch (e) {
       const msg = e.shortMessage || e.message || "";
       // Une erreur de contrat (revert) est définitive : ne pas la retenter.
-      if (i === 3 || e.cause?.data?.errorName || /revert/i.test(msg)) throw new Error(`${label}: ${msg.slice(0, 120)}`);
+      // On relance l'erreur TELLE QUELLE : l'appelant lit e.cause.data.errorName pour
+      // nommer le refus, et l'envelopper dans une autre Error effacerait cette info.
+      if (i === 3 || e.cause?.data?.errorName || /revert/i.test(msg)) { e.stepLabel = label; throw e; }
       await sleep(2000 * (i + 1));
     }
   }
@@ -176,17 +178,19 @@ async function runScheduledPayments() {
     const due = !p.lastPaid || (Date.now() - Date.parse(p.lastPaid)) >= p.everyDays * 86_400_000;
     if (!due) continue;
     const token = p.token === "EURC" ? env.EURC : env.USDC;
-    const allowed = await client.readContract({ address: env.VAULT_ADDRESS, abi: vaultAbi, functionName: "allowedPayee", args: [p.payee] });
+    const allowed = await read({ address: env.VAULT_ADDRESS, abi: vaultAbi, functionName: "allowedPayee", args: [p.payee] }, "allowedPayee");
     if (!allowed) {
       // Le refus est prononcé par le contrat, pas par l'agent : on simule l'appel pour
       // journaliser l'erreur typée que le vault renverrait (aucun gas dépensé).
       let vaultError = "PayeeNotAllowed()";
       let simulationFailed = null;
       try {
-        await client.simulateContract({
+        // send() ne retente pas un revert (c'est le cas attendu ici, il remonte tout de suite)
+        // mais absorbe une panne réseau, sinon le motif du refus n'est pas lu.
+        await send(() => client.simulateContract({
           account, address: env.VAULT_ADDRESS, abi: vaultAbi, functionName: "pay",
           args: [token, p.payee, BigInt(Math.round(p.amount * 1e6)), p.memo || ""],
-        });
+        }), "simulate pay");
       } catch (e) {
         // Seule une erreur décodée du contrat écrase le motif. Si la simulation échoue pour
         // une raison réseau, le refus reste vrai (allowedPayee a répondu false, on-chain) —
@@ -202,11 +206,11 @@ async function runScheduledPayments() {
     }
     if (process.env.EXECUTE !== "1") { results.push({ payee: p.payee, paid: false, reason: "dry-run" }); continue; }
     try {
-      const tx = await wallet.writeContract({
+      const tx = await send(() => wallet.writeContract({
         address: env.VAULT_ADDRESS, abi: vaultAbi, functionName: "pay",
         args: [token, p.payee, BigInt(Math.round(p.amount * 1e6)), p.memo || ""],
-      });
-      await client.waitForTransactionReceipt({ hash: tx });
+      }), "pay");
+      await send(() => client.waitForTransactionReceipt({ hash: tx }), "pay receipt");
       p.lastPaid = new Date().toISOString().slice(0, 10);
       dirty = true;
       results.push({ payee: p.payee, paid: true, amount: p.amount, token: p.token, tx });
