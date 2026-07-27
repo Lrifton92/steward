@@ -62,6 +62,7 @@
   .badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 600; }
   .badge.pay { background: rgba(51,214,166,.12); color: var(--acc2); border: 1px solid rgba(51,214,166,.35); }
   .badge.free { background: rgba(255,180,84,.10); color: var(--warn); border: 1px solid rgba(255,180,84,.3); }
+  .badge.deny { background: rgba(255,92,104,.12); color: #ff5c68; border: 1px solid rgba(255,92,104,.38); }
 </style>
 </head>
 <body>
@@ -179,7 +180,12 @@ async function refresh() {
         <div><b>${act ? ('rebalance ' + (e.decision.amountUsd ?? e.decision.amount) + '$ ' + e.decision.from + ' → ' + e.decision.to) : 'hold'}</b>
         — <span class="why">${e.decision.reason}</span></div>
         ${exec ? `<div class="tx">swap ${e.execution.swapTx}</div>` : ''}
-        ${(e.payments||[]).map(p => `<div class="why">payment ${p.paid ? '✓ ' + p.amount + ' ' + p.token + ' → ' + p.payee.slice(0,10) : 'skipped: ' + p.reason}</div>`).join('')}
+        ${(e.payments||[]).map(p => {
+          if (p.paid) return `<div class="why">payment ✓ ${p.amount} ${p.token} → ${p.payee.slice(0,10)}</div>`;
+          // Refus prononcé par le contrat : c'est la démonstration, pas un détail — on le montre.
+          if (p.refusedBy) return `<div class="why">payment ${p.payee.slice(0,10)} — <span class="badge deny">${p.refusedBy} refused · ${p.reason}</span></div>`;
+          return `<div class="why">payment skipped: ${p.reason}</div>`;
+        }).join('')}
       </div>`;
     }).join('');
   } catch {}
