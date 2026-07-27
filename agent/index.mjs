@@ -167,17 +167,23 @@ async function runScheduledPayments() {
       // Le refus est prononcé par le contrat, pas par l'agent : on simule l'appel pour
       // journaliser l'erreur typée que le vault renverrait (aucun gas dépensé).
       let vaultError = "PayeeNotAllowed()";
+      let simulationFailed = null;
       try {
         await client.simulateContract({
           account, address: env.VAULT_ADDRESS, abi: vaultAbi, functionName: "pay",
           args: [token, p.payee, BigInt(Math.round(p.amount * 1e6)), p.memo || ""],
         });
       } catch (e) {
-        vaultError = e.cause?.data?.errorName
-          ? `${e.cause.data.errorName}()`
-          : (e.shortMessage || e.message || "").slice(0, 120);
+        // Seule une erreur décodée du contrat écrase le motif. Si la simulation échoue pour
+        // une raison réseau, le refus reste vrai (allowedPayee a répondu false, on-chain) —
+        // journaliser "RPC Request failed" comme motif du vault serait un mensonge.
+        if (e.cause?.data?.errorName) vaultError = `${e.cause.data.errorName}()`;
+        else simulationFailed = (e.shortMessage || e.message || "").slice(0, 120);
       }
-      results.push({ payee: p.payee, paid: false, refusedBy: "PolicyVault", reason: vaultError });
+      results.push({
+        payee: p.payee, paid: false, refusedBy: "PolicyVault", reason: vaultError,
+        ...(simulationFailed ? { note: `error not read back: ${simulationFailed}` } : {}),
+      });
       continue;
     }
     if (process.env.EXECUTE !== "1") { results.push({ payee: p.payee, paid: false, reason: "dry-run" }); continue; }
