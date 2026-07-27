@@ -212,7 +212,15 @@ async function op(fn, params) {
   try {
     const [from] = await window.ethereum.request({ method: 'eth_requestAccounts' });
     const q = new URLSearchParams({ fn, ...params });
-    const { to, data, chainId } = await fetch('/api/encode?' + q).then(r => r.json());
+    const r = await fetch('/api/encode?' + q);
+    const payload = await r.json();
+    // Sans ça, une erreur serveur (champ vide, adresse invalide) laisse chainId undefined
+    // et l'utilisateur ne voit qu'un "cannot read properties of undefined".
+    if (!r.ok || payload.error) {
+      $('msg').textContent = (payload.error || 'encode failed').split('\n')[0];
+      return;
+    }
+    const { to, data, chainId } = payload;
     if (!(await ensureArc(chainId))) {
       $('msg').textContent = 'BLOCKED: wallet is not on Arc Testnet — switch network in Coinbase Wallet, then retry.';
       return;
