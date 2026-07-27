@@ -177,7 +177,7 @@ async function refresh() {
       const exec = e.execution && e.execution.executed;
       return `<div class="j ${act?'act':''}">
         <div class="t">${e.ts} · ${e.mode}${e.market && e.market.paidUsdc ? ' · <span class="badge pay">paid ' + e.market.paidUsdc + ' USDC</span>' : ''}</div>
-        <div><b>${act ? ('rebalance ' + (e.decision.amountUsd ?? e.decision.amount) + '$ ' + e.decision.from + ' → ' + e.decision.to) : 'hold'}</b>
+        <div><b>${act ? ('rebalance ' + Number(e.decision.amountUsd ?? e.decision.amount).toFixed(2) + '$ ' + e.decision.from + ' → ' + e.decision.to) : 'hold'}</b>
         — <span class="why">${e.decision.reason}</span></div>
         ${exec ? `<div class="tx">swap ${e.execution.swapTx}</div>` : ''}
         ${(e.payments||[]).map(p => {

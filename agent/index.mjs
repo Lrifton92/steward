@@ -116,6 +116,20 @@ function decide(usdc, eurcInUsd) {
   };
 }
 
+// Même plafond RPC que pour les lectures : une écriture ou une attente de reçu qui part
+// dans la rafale se fait jeter, et le rebalance échoue à mi-parcours.
+async function send(fn, label) {
+  for (let i = 0; ; i++) {
+    try { const v = await fn(); await sleep(900); return v; }
+    catch (e) {
+      const msg = e.shortMessage || e.message || "";
+      // Une erreur de contrat (revert) est définitive : ne pas la retenter.
+      if (i === 3 || e.cause?.data?.errorName || /revert/i.test(msg)) throw new Error(`${label}: ${msg.slice(0, 120)}`);
+      await sleep(2000 * (i + 1));
+    }
+  }
+}
+
 async function executeRebalance(decision, mkt) {
   const vault = env.VAULT_ADDRESS;
   const desk = env.FXDESK_ADDRESS;
@@ -126,11 +140,11 @@ async function executeRebalance(decision, mkt) {
     : BigInt(Math.round(decision.amountUsd * mkt.eurPerUsd * 1e6));
 
   // 1. rafraîchir le taux du desk sur le marché (le burner est owner du desk testnet)
-  const setRateTx = await wallet.writeContract({ address: desk, abi: deskAbi, functionName: "setRate", args: [mkt.rate6] });
-  await client.waitForTransactionReceipt({ hash: setRateTx });
+  const setRateTx = await send(() => wallet.writeContract({ address: desk, abi: deskAbi, functionName: "setRate", args: [mkt.rate6] }), "setRate");
+  await send(() => client.waitForTransactionReceipt({ hash: setRateTx }), "setRate receipt");
 
   // 2. garde-fou slippage : quote desk vs taux marché
-  const quoted = await client.readContract({ address: desk, abi: deskAbi, functionName: "quote", args: [tokenIn, amountIn] });
+  const quoted = await read({ address: desk, abi: deskAbi, functionName: "quote", args: [tokenIn, amountIn] }, "quote");
   const expected = decision.from === "USDC"
     ? (amountIn * mkt.rate6) / 1_000_000n
     : (amountIn * 1_000_000n) / mkt.rate6;
@@ -138,10 +152,10 @@ async function executeRebalance(decision, mkt) {
   if (slipBps > POLICY.maxSlippageBps) return { executed: false, reason: `slippage ${slipBps}bps > max` };
 
   // 3. approve depuis le vault (compte dans le cap journalier) puis settlement
-  const approveTx = await wallet.writeContract({ address: vault, abi: vaultAbi, functionName: "approveTarget", args: [tokenIn, desk, amountIn] });
-  await client.waitForTransactionReceipt({ hash: approveTx });
-  const swapTx = await wallet.writeContract({ address: desk, abi: deskAbi, functionName: "swapFor", args: [vault, tokenIn, amountIn] });
-  const rcpt = await client.waitForTransactionReceipt({ hash: swapTx });
+  const approveTx = await send(() => wallet.writeContract({ address: vault, abi: vaultAbi, functionName: "approveTarget", args: [tokenIn, desk, amountIn] }), "approveTarget");
+  await send(() => client.waitForTransactionReceipt({ hash: approveTx }), "approve receipt");
+  const swapTx = await send(() => wallet.writeContract({ address: desk, abi: deskAbi, functionName: "swapFor", args: [vault, tokenIn, amountIn] }), "swapFor");
+  const rcpt = await send(() => client.waitForTransactionReceipt({ hash: swapTx }), "swap receipt");
   return { executed: true, amountIn: amountIn.toString(), quoted: quoted.toString(), approveTx, swapTx, block: Number(rcpt.blockNumber) };
 }
 
