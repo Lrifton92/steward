@@ -112,6 +112,7 @@
     <div id="tab1">
       <input id="payee" placeholder="payee address 0x…">
       <button onclick="op('setPayee', {payee: v('payee'), allowed: 'true'})">Allowlist payee (sign as owner)</button>
+      <button class="ghost" onclick="op('setPayee', {payee: v('payee'), allowed: 'false'})">Revoke payee</button>
     </div>
     <div id="tab2" style="display:none">
       <select id="captoken"><option>USDC</option><option>EURC</option></select>

@@ -37,21 +37,46 @@ const deskAbi = parseAbi(["function rateUsdcToEurc() view returns (uint256)"]);
 
 const bal6 = (v) => Number(formatUnits(v, 6));
 
+// Le RPC public Arc plafonne à ~1 requête/seconde (mesuré : 0,2 s d'écart => 50 % de
+// "request limit reached", 1 s => 100 % OK). On lit donc en série à ~1 req/s, avec retry,
+// et on met l'état en cache : sinon un refresh (11 lectures) casse, et l'agent qui lit en
+// parallèle sur la même IP consomme le même quota.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function read(call, label) {
+  for (let i = 0; ; i++) {
+    try { const v = await client.readContract(call); await sleep(900); return v; }
+    catch (e) {
+      if (i === 3) throw new Error(`${label}: ${e.shortMessage || e.message}`);
+      await sleep(2000 * (i + 1));
+    }
+  }
+}
+
+const STATE_TTL_MS = 15000;
+let stateCache = { at: 0, value: null, inflight: null };
+async function cachedState() {
+  if (stateCache.value && Date.now() - stateCache.at < STATE_TTL_MS) return stateCache.value;
+  if (!stateCache.inflight) {
+    stateCache.inflight = state()
+      .then((v) => { stateCache = { at: Date.now(), value: v, inflight: null }; return v; })
+      .catch((e) => { stateCache.inflight = null; throw e; });
+  }
+  return stateCache.inflight;
+}
+
 async function state() {
   const V = env.VAULT_ADDRESS, D = env.FXDESK_ADDRESS;
-  const [vUsdc, vEurc, dUsdc, dEurc, rate, capU, capE, remU, remE, owner, agent] = await Promise.all([
-    client.readContract({ address: env.USDC, abi: erc20, functionName: "balanceOf", args: [V] }),
-    client.readContract({ address: env.EURC, abi: erc20, functionName: "balanceOf", args: [V] }),
-    client.readContract({ address: env.USDC, abi: erc20, functionName: "balanceOf", args: [D] }),
-    client.readContract({ address: env.EURC, abi: erc20, functionName: "balanceOf", args: [D] }),
-    client.readContract({ address: D, abi: deskAbi, functionName: "rateUsdcToEurc" }),
-    client.readContract({ address: V, abi: vaultAbi, functionName: "dailyCap", args: [env.USDC] }),
-    client.readContract({ address: V, abi: vaultAbi, functionName: "dailyCap", args: [env.EURC] }),
-    client.readContract({ address: V, abi: vaultAbi, functionName: "remainingToday", args: [env.USDC] }),
-    client.readContract({ address: V, abi: vaultAbi, functionName: "remainingToday", args: [env.EURC] }),
-    client.readContract({ address: V, abi: vaultAbi, functionName: "owner" }),
-    client.readContract({ address: V, abi: vaultAbi, functionName: "agent" }),
-  ]);
+  const vUsdc = await read({ address: env.USDC, abi: erc20, functionName: "balanceOf", args: [V] }, "vault USDC");
+  const vEurc = await read({ address: env.EURC, abi: erc20, functionName: "balanceOf", args: [V] }, "vault EURC");
+  const dUsdc = await read({ address: env.USDC, abi: erc20, functionName: "balanceOf", args: [D] }, "desk USDC");
+  const dEurc = await read({ address: env.EURC, abi: erc20, functionName: "balanceOf", args: [D] }, "desk EURC");
+  const rate = await read({ address: D, abi: deskAbi, functionName: "rateUsdcToEurc" }, "desk rate");
+  const capU = await read({ address: V, abi: vaultAbi, functionName: "dailyCap", args: [env.USDC] }, "cap USDC");
+  const capE = await read({ address: V, abi: vaultAbi, functionName: "dailyCap", args: [env.EURC] }, "cap EURC");
+  const remU = await read({ address: V, abi: vaultAbi, functionName: "remainingToday", args: [env.USDC] }, "remaining USDC");
+  const remE = await read({ address: V, abi: vaultAbi, functionName: "remainingToday", args: [env.EURC] }, "remaining EURC");
+  const owner = await read({ address: V, abi: vaultAbi, functionName: "owner" }, "owner");
+  const agent = await read({ address: V, abi: vaultAbi, functionName: "agent" }, "agent");
   let market = null;
   try {
     const r = await fetch("https://api.frankfurter.app/latest?from=USD&to=EUR").then((x) => x.json());
@@ -104,7 +129,7 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const json = (code, obj) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); };
   try {
-    if (url.pathname === "/api/state") return json(200, await state());
+    if (url.pathname === "/api/state") return json(200, await cachedState());
     if (url.pathname === "/api/journal") return json(200, journal());
     if (url.pathname === "/api/encode") return json(200, { to: env.VAULT_ADDRESS, data: encodeOp(url.searchParams), chainId: Number(env.CHAIN_ID) });
     const html = readFileSync(path.join(root, "dashboard", "index.html"));

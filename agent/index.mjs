@@ -35,6 +35,11 @@ const vaultAbi = parseAbi([
   "function approveTarget(address token, address target, uint256 amount)",
   "function pay(address token, address to, uint256 amount, string memo)",
   "function allowedPayee(address) view returns (bool)",
+  // Erreurs typées du vault : permet de journaliser le refus tel que le contrat le formule.
+  "error TokenNotAllowed()",
+  "error PayeeNotAllowed()",
+  "error TargetNotAllowed()",
+  "error DailyCapExceeded(uint256 requested, uint256 remaining)",
 ]);
 const deskAbi = parseAbi([
   "function rateUsdcToEurc() view returns (uint256)",
@@ -74,11 +79,22 @@ async function marketRate() {
   return { ...r, rate6: BigInt(Math.round(r.eurPerUsd * 1e6)) };
 }
 
+// Le RPC public Arc plafonne à ~1 requête/seconde : toute rafale parallèle retourne
+// "request limit reached". Les lectures passent donc en série, avec retry.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function read(call, label) {
+  for (let i = 0; ; i++) {
+    try { const v = await client.readContract(call); await sleep(900); return v; }
+    catch (e) {
+      if (i === 3) throw new Error(`${label}: ${e.shortMessage || e.message}`);
+      await sleep(2000 * (i + 1));
+    }
+  }
+}
+
 async function tokenBalance(token, holder) {
-  const [bal, dec] = await Promise.all([
-    client.readContract({ address: token, abi: erc20, functionName: "balanceOf", args: [holder] }),
-    client.readContract({ address: token, abi: erc20, functionName: "decimals" }),
-  ]);
+  const bal = await read({ address: token, abi: erc20, functionName: "balanceOf", args: [holder] }, `balanceOf ${token}`);
+  const dec = await read({ address: token, abi: erc20, functionName: "decimals" }, `decimals ${token}`);
   return Number(formatUnits(bal, dec));
 }
 
@@ -147,7 +163,23 @@ async function runScheduledPayments() {
     if (!due) continue;
     const token = p.token === "EURC" ? env.EURC : env.USDC;
     const allowed = await client.readContract({ address: env.VAULT_ADDRESS, abi: vaultAbi, functionName: "allowedPayee", args: [p.payee] });
-    if (!allowed) { results.push({ payee: p.payee, paid: false, reason: "payee not allowlisted in vault" }); continue; }
+    if (!allowed) {
+      // Le refus est prononcé par le contrat, pas par l'agent : on simule l'appel pour
+      // journaliser l'erreur typée que le vault renverrait (aucun gas dépensé).
+      let vaultError = "PayeeNotAllowed()";
+      try {
+        await client.simulateContract({
+          account, address: env.VAULT_ADDRESS, abi: vaultAbi, functionName: "pay",
+          args: [token, p.payee, BigInt(Math.round(p.amount * 1e6)), p.memo || ""],
+        });
+      } catch (e) {
+        vaultError = e.cause?.data?.errorName
+          ? `${e.cause.data.errorName}()`
+          : (e.shortMessage || e.message || "").slice(0, 120);
+      }
+      results.push({ payee: p.payee, paid: false, refusedBy: "PolicyVault", reason: vaultError });
+      continue;
+    }
     if (process.env.EXECUTE !== "1") { results.push({ payee: p.payee, paid: false, reason: "dry-run" }); continue; }
     try {
       const tx = await wallet.writeContract({
@@ -169,10 +201,8 @@ async function runScheduledPayments() {
 async function tick() {
   const vault = env.VAULT_ADDRESS;
   const mkt = await marketRate();
-  const [usdc, eurc] = await Promise.all([
-    tokenBalance(env.USDC, vault),
-    tokenBalance(env.EURC, vault),
-  ]);
+  const usdc = await tokenBalance(env.USDC, vault);
+  const eurc = await tokenBalance(env.EURC, vault);
   const eurcInUsd = eurc / mkt.eurPerUsd;
   const decision = decide(usdc, eurcInUsd);
 
