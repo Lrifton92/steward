@@ -15,10 +15,16 @@ withdraw everything, no policy checks.
 
 ## What's live (Arc testnet)
 
-- **PolicyVault v2** — `0x7523BfE340EF8c1662844B3F4D663e87C4560E32` (roles owner/agent, allowlists, 50 USDC & EURC daily caps)
-- **FxDesk** — `0x7B82f3b3…caA9`, atomic USDC↔EURC settlement at a posted rate (pluggable: same interface as any escrow-based FX venue)
-- **First autonomous rebalance** executed at the live rate (0.87535), converging to the 60/40 target band
-- **Scheduled payments** — declared in `agent/payments.json`, refused until the owner allowlists the payee on-chain, then executed autonomously by the loop
+Both contracts are **source-verified on the explorer** — every call below reads as a named method, not a selector.
+
+- **PolicyVault v2** — [`0x7523BfE340EF8c1662844B3F4D663e87C4560E32`](https://testnet.arcscan.app/address/0x7523BfE340EF8c1662844B3F4D663e87C4560E32?tab=contract) (roles owner/agent, allowlists, 50 USDC & EURC daily caps)
+- **FxDesk** — [`0x7B82f3b3e282F30493F1c4Fc6942450008E0caA9`](https://testnet.arcscan.app/address/0x7B82f3b3e282F30493F1c4Fc6942450008E0caA9?tab=contract), atomic USDC↔EURC settlement at a posted rate (pluggable: same interface as any escrow-based FX venue)
+- **Autonomous rebalance**, unattended: the loop paid a scheduled invoice, saw the treasury drop out of its
+  60/40 band, and corrected itself in the next tick — [`approveTarget`](https://testnet.arcscan.app/tx/0x746e64013b124fcabc711946abe671f05a3d1a5b8c636816c4f7cda1f8c2253c)
+  then [`swapFor`](https://testnet.arcscan.app/tx/0xbe1b444f3330a9a0461e22c8c62bfc05eb663c8f3561916c6cab88c78fc68aae), no human in the loop.
+- **Scheduled payments** — declared in `agent/payments.json`, refused by the vault until the owner allowlists the
+  payee on-chain (the agent simulates the call and journals the contract's own `PayeeNotAllowed()`, spending no gas),
+  then executed autonomously by the loop — [`pay`](https://testnet.arcscan.app/tx/0x04ef1473ba57a7a075ab85c128740bac0218b2780e234e01a9d8b1eafdbd5de1)
 - **Nanopayments** — the agent buys each FX quote from a local x402 oracle (0.0005 USDC/request via Circle Gateway, testnet), with a free fallback; the dashboard shows the paid source badge and cumulative oracle spend
 
 ## Track criteria coverage
