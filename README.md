@@ -2,6 +2,8 @@
 
 > Encode × Arc "Programmable Money" Hackathon 2026 — Agentic Economy Track.
 
+**🔴 Live:** [mission-control dashboard](https://steward-live.vercel.app) (the agent runs 24/7 — the decision journal you see is real) · [3-min demo video](https://steward-demo-lrifton6240.vercel.app) · [deck](https://steward-deck-lrifton6240.vercel.app)
+
 Steward is an autonomous treasury agent for multi-currency stablecoin treasuries on [Arc](https://arc.network).
 A **policy vault** deployed on Arc holds USDC/EURC and encodes hard rules — token, payee and
 target allowlists, per-token daily caps. A **24/7 agent** monitors balances and live FX,
@@ -65,4 +67,4 @@ scripts/start-steward.cmd         # agent loop + dashboard (:8788) + x402 oracle
 - **W1** ✅ vault v0 + tests, agent skeleton (dry-run), deployed on Arc testnet
 - **W2** ✅ FxDesk settlement + execute mode — first autonomous rebalance at the live rate
 - **W3** ✅ 24/7 loop, scheduled payments, mission-control dashboard, x402 nanopayments oracle
-- **W4** polish, 3-min video, deck, final submission (Aug 9)
+- **W4** ✅ polish, 3-min video, deck, final submission (Aug 9) — shortlisted for the Arc accelerator review (Aug 13)

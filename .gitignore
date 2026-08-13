@@ -5,6 +5,7 @@ contracts/cache/
 contracts/broadcast/
 agent/state.json
 agent/journal.jsonl
+agent/journal-backup-*.jsonl
 agent/*.log
 oracle/payments.log
 *.log
